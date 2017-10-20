@@ -9,8 +9,8 @@ category a given Belgian traffic sign will fall into.
 
 import tensorflow as tf
 import os
-import skimage
-from skimage import data
+import skimage.data
+import skimage.transform
 import matplotlib.pyplot as plt
 import numpy as np 
 import random
@@ -37,75 +37,118 @@ test_data_directory = os.path.join(ROOT_PATH, "TrafficSigns/Testing")
 
 images, labels = load_data(train_data_directory)
 
-# Make a histogram with 62 bins of the `labels` data
-plt.hist(labels, 62)
-# Show the plot
-plt.show()
+print("Unique Labels: {0}\nTotal Images: {1}".format(len(set(labels)), len(images)))
 
-# Initialize placeholders 
-x = tf.placeholder(dtype = tf.float32, shape = [None, 28, 28])
-y = tf.placeholder(dtype = tf.int32, shape = [None])
+def display_images_and_labels(images, labels):
+    """Display the first image of each label."""
+    unique_labels = set(labels)
+    plt.figure(figsize=(15, 15))
+    i = 1
+    for label in unique_labels:
+        # Pick the first image for each label.
+        image = images[labels.index(label)]
+        plt.subplot(8, 8, i)  # A grid of 8 rows x 8 columns
+        plt.axis('off')
+        plt.title("Label {0} ({1})".format(label, labels.count(label)))
+        i += 1
+        _ = plt.imshow(image)
+    plt.show()
 
-# Flatten the input data
-images_flat = tf.contrib.layers.flatten(x)
+display_images_and_labels(images, labels)
 
-# Fully connected layer 
-logits = tf.contrib.layers.fully_connected(images_flat, 62, tf.nn.relu)
+def display_label_images(images, label):
+    """Display images of a specific label."""
+    limit = 24  # show a max of 24 images
+    plt.figure(figsize=(15, 5))
+    i = 1
 
-# Define a loss function
-loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels = y, 
-                                                                    logits = logits))
-# Define an optimizer 
-train_op = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss)
+    start = labels.index(label)
+    end = start + labels.count(label)
+    for image in images[start:end][:limit]:
+        plt.subplot(3, 8, i)  # 3 rows, 8 per row
+        plt.axis('off')
+        i += 1
+        plt.imshow(image)
+    plt.show()
 
-# Convert logits to label indexes
-correct_pred = tf.argmax(logits, 1)
+display_label_images(images, 32)
 
-# Define an accuracy metric
-accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32)) 
+for image in images[:5]:
+    print("shape: {0}, min: {1}, max: {2}".format(image.shape, image.min(), image.max()))
 
-# Import the `transform` module from `skimage`
-from skimage import transform 
+# Resize images
+images32 = [skimage.transform.resize(image, (32, 32), mode='constant')
+                for image in images]
+display_images_and_labels(images32, labels)
 
-# Rescale the images in the `images` array
-images28 = [transform.resize(image, (28, 28), mode='constant') for image in images]
-from skimage.color import rgb2gray
+for image in images32[:5]:
+    print("shape: {0}, min: {1}, max: {2}".format(image.shape, image.min(), image.max()))
 
-# Convert `images28` to an array
-images28 = np.array(images28)
+labels_a = np.array(labels)
+images_a = np.array(images32)
+print("labels: ", labels_a.shape, "\nimages: ", images_a.shape)
 
-# Convert `images28` to grayscale
-images28 = rgb2gray(images28)
-unique_labels = set(labels)
+# Create a graph to hold the model.
+graph = tf.Graph()
 
+# Create model in the graph.
+with graph.as_default():
+    # Placeholders for inputs and labels.
+    images_ph = tf.placeholder(tf.float32, [None, 32, 32, 3])
+    labels_ph = tf.placeholder(tf.int32, [None])
 
-tf.set_random_seed(1234)
-sess = tf.Session()
+    # Flatten input from: [None, height, width, channels]
+    # To: [None, height * width * channels] == [None, 3072]
+    images_flat = tf.contrib.layers.flatten(images_ph)
 
-sess.run(tf.global_variables_initializer())
+    # Fully connected layer. 
+    # Generates logits of size [None, 62]
+    logits = tf.contrib.layers.fully_connected(images_flat, 62, tf.nn.relu)
+
+    # Convert logits to label indexes (int).
+    # Shape [None], which is a 1D vector of length == batch_size.
+    predicted_labels = tf.argmax(logits, 1)
+
+    # Define the loss function. 
+    # Cross-entropy is a good choice for classification.
+    loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels_ph))
+
+    # Create training op.
+    train = tf.train.AdamOptimizer(learning_rate=0.001).minimize(loss)
+
+    # And, finally, an initialization op to execute before training.
+    # TODO: rename to tf.global_variables_initializer() on TF 0.12.
+    init = tf.initialize_all_variables()
+
+print("images_flat: ", images_flat)
+print("logits: ", logits)
+print("loss: ", loss)
+print("predicted_labels: ", predicted_labels)
+
+# Create a session to run the graph we created.
+session = tf.Session(graph=graph)
+
+# First step is always to initialize all variables. 
+# We don't care about the return value, though. It's None.
+_ = session.run([init])
 
 for i in range(201):
-       
-        _, accuracy_val = sess.run([train_op, accuracy], feed_dict={x: images28, y: labels})
-        _, loss_value = sess.run([train_op, loss], feed_dict={x: images28, y: labels})
-        if i % 10 == 0:
-            print('EPOCH', i)
-            print("Loss: ", loss_value)
-            print("Accuracy:", accuracy_val)
-        
-        
-sample_indexes = random.sample(range(len(images28)), 10)
-sample_images = [images28[i] for i in sample_indexes]
+    _, loss_value = session.run([train, loss], 
+                                feed_dict={images_ph: images_a, labels_ph: labels_a})
+    if i % 10 == 0:
+        print("Loss: ", loss_value)
+
+# Pick 10 random images
+sample_indexes = random.sample(range(len(images32)), 10)
+sample_images = [images32[i] for i in sample_indexes]
 sample_labels = [labels[i] for i in sample_indexes]
 
-# Run the "correct_pred" operation
-predicted = sess.run([correct_pred], feed_dict={x: sample_images})[0]
-                        
-# Print the real and predicted labels
+# Run the "predicted_labels" op.
+predicted = session.run([predicted_labels], 
+                        feed_dict={images_ph: sample_images})[0]
 print(sample_labels)
 print(predicted)
 
-# Display the predictions and the ground truth visually.
 fig = plt.figure(figsize=(10, 10))
 for i in range(len(sample_images)):
     truth = sample_labels[i]
@@ -115,27 +158,23 @@ for i in range(len(sample_images)):
     color='green' if truth == prediction else 'red'
     plt.text(40, 10, "Truth:        {0}\nPrediction: {1}".format(truth, prediction), 
              fontsize=12, color=color)
-    plt.imshow(sample_images[i],  cmap="gray")
+    plt.imshow(sample_images[i])
 
-plt.show()
-
+# Load the test dataset.
 test_images, test_labels = load_data(test_data_directory)
 
-# Transform the images to 28 by 28 pixels
-test_images28 = [transform.resize(image, (28, 28), mode='constant') for image in test_images]
-
-# Convert to grayscale
-from skimage.color import rgb2gray
-test_images28 = rgb2gray(np.array(test_images28))
+# Transform the images, just like we did with the training set.
+test_images32 = [skimage.transform.resize(image, (32, 32), mode='constant')
+                 for image in test_images]
+display_images_and_labels(test_images32, test_labels)
 
 # Run predictions against the full test set.
-predicted = sess.run([correct_pred], feed_dict={x: test_images28})[0]
-
-# Calculate correct matches 
+predicted = session.run([predicted_labels], 
+                        feed_dict={images_ph: test_images32})[0]
+# Calculate how many matches we got.
 match_count = sum([int(y == y_) for y, y_ in zip(test_labels, predicted)])
-
-# Calculate the accuracy
 accuracy = match_count / len(test_labels)
-
-# Print the accuracy
 print("Accuracy: {:.3f}".format(accuracy))
+
+# Close the session. This will destroy the trained model.
+session.close()
