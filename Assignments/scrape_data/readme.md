@@ -1,4 +1,5 @@
 Scraping Data
 ==============================
 Due: September 18
-Roster #: 1
+- ***Name:*** Steven Kundert
+- ***Roster Number:*** 1
